@@ -529,16 +529,32 @@ forecast::dm.test(errs$snaive, errs$tslm, h = 1, power = 1)
 
 #Report the DM statistic and p-value. In a sentence or two, state your conclusion in words
 
+#DM = −31.278
+#p-value < 2.2 × 10⁻¹⁶
+
+#Conclusion:
+#The Diebold-Mariano test strongly rejects the null hypothesis of equal forecast accuracy (p < 2.2 × 10⁻¹⁶). The large negative DM statistic indicates that the SNAIVE model has systematically smaller absolute forecast errors than the TSLM, confirming that SNAIVE forecasts significantly more accurately than the log-linear trend-plus-seasonal model. The difference is not due to chance.
+
 
 #5.3. A Rolling Window
 
 #5.3a.
+gas_cv_fc_roll <- can_gas |>
+  select(Month, Volume) |>
+  slide_tsibble(.size = 240, .step = 1) |>
+  model(snaive = SNAIVE(Volume),
+        tslm   = TSLM(log(Volume) ~ trend() + season())) |>
+  forecast(h = 1)
+
+gas_cv_fc_roll |>
+  accuracy(can_gas, measures = list(MAE = MAE, RMSE = RMSE))
 
 
-
-
-
-
+#The TSLM's accuracy changed more dramatically when switching to a rolling window — its MAE nearly halved from 4.01 to 2.09 and RMSE from 4.36 to 2.42 — while SNAIVE's accuracy was completely unchanged (MAE = 0.562, RMSE = 0.702 in both cases).
+#This is because, as seen in Part 4.4b, the TSLM's single linear trend is a poor global fit to the full sample
+#so with an expanding window, each forecast is made from a model whose trend is distorted by that entire misfit history. 
+#The rolling window fixes this by restricting each training sample to the most recent 240 months, allowing the TSLM to estimate a locally appropriate linear trend that better reflects the current level and trajectory of the series.
+#SNAIVE is unaffected because it carries no estimated trend at all
 
 
 
