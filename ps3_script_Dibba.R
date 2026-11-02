@@ -209,7 +209,7 @@ can_gas |>
 #3.1. Log Transformation
 #3.1a. Look back at the plot of can_gas (from 2.7c) and in particular at the seasonal swings in the data. Recall that if the seasonal swings grow with the level of the series, the series is a good candidate for a log transformation. 
 
-Ans:
+#Ans:
 #Do the swings get larger as the series grows?
   #Yes, broadly speaking — the seasonal swings do grow in absolute size as the level of the series rises. In the early 1960s, when production was around 1.5–4 billion cubic meters, the peaks and troughs within each year are narrow and close together. By the mid-1970s to early 1980s, as the level climbs toward ~8–10 BCM, the swings are noticeably wider in absolute terms.
 #Is that true over the whole sample?
@@ -336,6 +336,212 @@ retail_ts |>
 
 #Ans:
 #The NSA series (RSAFSNA) is far noisier in growth-rate terms, with month-over-month swings regularly exceeding ±20 percentage points driven by a strong, repeating seasonal pattern (a large positive jump every December followed by a sharp negative reading every January). The SA series (RSAFS) is much smoother, with fluctuations typically staying well within ±5 percentage points, because the predictable seasonal component has already been stripped out before the growth rate is computed. This connects directly to Part 2.7b: the pronounced December spike and steep January drop visible in the NSA level series translate one-for-one into those large oscillating growth rates, whereas the SA series, which removed exactly that repeating within-year pattern, produces a growth rate series that reflects only trend momentum and irregular shocks.
+
+#Part 4 – Seeing, Decomposing, and Modeling Seasonality
+
+#4.1. gg_season() – A Season Plot
+
+retail_ts |>
+  filter(series_id == "RSAFSNA") |>
+  gg_season(sales) +
+  labs(
+    title = "Seasonal Pattern in NSA Retail Sales",
+    y = "Millions of dollars"
+  ) +
+  theme_minimal()
+
+#4.1b. Now make the same plot for the SA series (RSAFS). 
+
+retail_ts |>
+  filter(series_id == "RSAFS") |>
+  gg_season(sales) +
+  labs(
+    title = "Seasonal Pattern in SA Retail Sales",
+    y     = "Millions of dollars"
+  ) +
+  theme_minimal()
+
+#In a sentence or two, contrast the two season plots. This should make concrete, visually, exactly what “seasonally adjusted” means: the SA series is the NSA series with the repeating seasonal pattern estimated and removed.
+#Ans:
+#In the NSA season plot, every year's line traces the same distinctive wave,dipping in February, climbing through spring, softening briefly mid-summer, and then surging into December so the lines are stacked nearly on top of one another in shape, which is the visual signature of a strong, repeating seasonal pattern. In the SA season plot, that shared wave is gone: the lines run nearly flat and horizontal across all twelve months, confirming that seasonal adjustment has stripped out exactly that predictable within-year rhythm while leaving the year-to-year level differences (i.e., the long-run growth) intact.
+
+# 4.1c. Season plot for Canadian gas production (logged series)
+can_gas |>
+  gg_season(log_volume) +
+  labs(
+    title = "Seasonal Pattern in Canadian Natural Gas Production",
+    y     = "log(Volume)"
+  ) +
+  theme_minimal()
+
+#Describe the seasonal pattern you see in a sentence. Which months tend to be high, which tend to be low, and does that match your intuition about natural gas production in Canada? (Hint: think about what natural gas is used for.)
+
+#Ans:
+#Production is highest in the winter months (January to March), with a clear peak around March, and lowest in the summer months (Juneto September), with the trough falling around June/July, and this pattern repeats consistently across all years, as shown by every year's line tracing nearly the same shape. 
+#This matches intuition that natural gas in Canada is used primarily for space heating, so demand and production both surge in the cold winter months and fall sharply when heating is no longer needed in summer.
+
+#4.2. gg_subseries() – A Subseries Plot
+
+can_gas |>
+  gg_subseries(log_volume) +
+  labs(
+    title = "Subseries Plot: Canadian Gas Production",
+    y = "log(Volume)"
+  )
+
+#4.3. Seasonally Adjusting a Series with X-13ARIMA-SEATS
+
+# 4.3a. Run X-13ARIMA-SEATS on the NSA series and plot components
+retail_nsa_x13 <- retail_ts |>
+  filter(series_id == "RSAFSNA") |>
+  model(x13 = X_13ARIMA_SEATS(sales)) |>
+  components()
+
+retail_nsa_x13 |> autoplot()
+
+#In a sentence or two: in which month is the seasonal factor highest, and roughly how far above trend are sales in that month? Does the size of the seasonal swings appear to change over time?
+
+#Ans:
+#The seasonal factor is highest in December, reaching approximately 1.20, meaning retail sales in December are typically about 20% above the trend-cycle, driven by holiday shopping. The seasonal factor is lowest in January/February, dipping to roughly 0.85–0.87 (about 13–15% below trend), reflecting the post-holiday spending drop. The size of the seasonal swings appears remarkably stable over time.
+
+#4.3b 
+#The season_adjust column of retail_nsa_x13 is your seasonally adjusted series.
+#Compare it to the official seasonally adjusted series by computing the percent difference between them (using the log-difference approximation) and plotting it
+
+sa_compare <- retail_nsa_x13 |>
+  as_tibble() |>
+  select(Month, mine = season_adjust) |>
+  left_join(
+    retail_ts |>
+      filter(series_id == "RSAFS") |>
+      as_tibble() |>
+      transmute(Month, census = sales),
+    by = "Month"
+  ) |>
+  mutate(pct_diff = 100 * (log(mine) - log(census)))
+
+sa_compare |>
+  ggplot(aes(x = Month, y = pct_diff)) +
+  geom_line() +
+  labs(
+    title = "My X-13 Seasonal Adjustment Minus the Census Bureau's",
+    x = NULL, y = "Difference (%)"
+  ) +
+  theme_minimal()
+
+
+
+#My X-13 adjustment tracks the Census Bureau's official series very closely for the vast majority of the sample — from 1992 through roughly 2018
+#The two adjustments diverge most dramatically around 2020–2022, where the difference spikes to nearly +1.5% before swinging down to approximately −1%, reflecting the fact that the Census Bureau applied custom outlier corrections
+#while my default X-13 run had no such tailored settings and therefore estimated a different seasonal factor for those anomalous months. There is also a modest, smaller widening around 2008–2010.
+
+#4.4. A Simple Model – Linear Trend + Seasonal Dummies
+
+#4.4a. Add code to your script to fit a linear trend plus seasonal dummy variables model to the log of the can_gas “Volume” variable:
+can_gas_fit <- can_gas |>
+  model(TSLM(log_volume ~ trend() + season()))
+
+report(can_gas_fit)
+
+#Report the estimated coefficients from the model in a table (useful for write up)
+can_gas_fit |>
+  tidy() |>
+  select(term, estimate, std.error, statistic, p.value) |>
+  knitr::kable(digits = 3)
+
+#What is the estimated average monthly growth rate of gas production? Which month has the most significant seasonal effect (largest t-statistic in absolute value)?
+#Ans:
+#The trend() coefficient is 3.973 × 10⁻³ (≈ 0.004). Multiplied by 100, this gives an estimated average monthly growth rate of approximately 0.40% per month.
+#June has the most significant seasonal effect (|t| = 4.777), with a coefficient of −0.251
+
+
+#4.4b. Now plot the fitted values from this model against the actual data:
+can_gas_fit |>
+  augment() |>
+  ggplot(aes(x = Month)) +
+  geom_line(aes(y = log_volume, color = "Actual")) +
+  geom_line(aes(y = .fitted, color = "Fitted")) +
+  labs(title = "Linear Trend + Seasonal Dummies Fit: Canadian Gas Production",
+       y = "log(Volume)", color = NULL) +
+  theme_minimal()
+
+#In a sentence, describe how well the fitted line tracks the actual series — where does it do well, and where does it visibly miss?
+#Ans:
+#The fitted line tracks the overall upward trend and the repeating seasonal oscillations reasonably well through the middle of the sample (roughly 1975–1995), where the two lines run close together
+#it visibly overestimates actual production in the early period (1960s–early 1970s, where the fitted line runs consistently above the actual) and underestimates it in the later period (post-2000, where the actual series surges well above the fitted).
+
+#4.4c. 
+can_gas_fit |> gg_tsresiduals()
+
+#Ljung–Box test
+can_gas_fit |>
+  augment() |>
+  features(.innov, ljung_box, lag = 24)
+
+#Ans:
+#The residuals are clearly not white noise. The time plot reveals a prominent slow-moving, hump-shaped pattern — residuals drift from strongly negative (~−1.0) in the early 1960s, peak near +0.5 around 1970, and then gradually decline through 2005 — indicating that the linear trend badly mischaracterizes the true shape of the trend in the data.
+#The ACF confirms this dramatically: autocorrelations remain very large (above 0.50) at virtually every lag out to lag 27, far exceeding the blue significance bands, which is a hallmark of highly persistent, unmodeled structure.
+
+#The Ljung–Box test, with a test statistic of approximately 7,774 and a p-value of essentially 0, strongly rejects the null hypothesis of white noise at the 5% level
+#confirming that there is substantial forecastable structure remaining in the residuals that the simple linear trend + seasonal dummies model has entirely failed to capture
+
+
+#Part 5 – A First Forecast Evaluation
+
+#5.1. An Expanding-Window TS-CV
+
+#5.1a
+gas_cv_fc <- can_gas |>
+  select(Month, Volume) |>
+  stretch_tsibble(.init = 240, .step = 1) |>
+  model(snaive = SNAIVE(Volume),
+        tslm   = TSLM(log(Volume) ~ trend() + season())) |>
+  forecast(h = 1)
+
+gas_cv_fc |>
+  accuracy(can_gas, measures = list(MAE = MAE, RMSE = RMSE))
+
+#What are the dates of the first and last forecasts that are evaluated? Report the MAE and RMSE of each model in a table. Which model forecasts more accurately? Do the two metrics agree?
+
+#Ans:
+#The data begins in January 1960, and the first training window spans 240 months (20 years), covering January 1960 – December 1979. Therefore, the first forecast evaluated is for January 1980.
+#As noted in the question, the very last training sample ends in February 2005 (the final data point) and produces an unobservable forecast. So the last forecast evaluated is for February 2005, produced from a training window ending in January 2005.
+
+#The SNAIVE model is far more accurate, with an MAE of 0.562 vs. 4.01 and an RMSE of 0.702 vs. 4.36 for the TSLM. This is consistent with the finding in 4.4c: the linear trend + seasonal dummies model leaves substantial unmodeled structure, so when back-transformed to original units its forecasts can be quite poor.
+
+#Do the two metrics agree? Yes, both MAE and RMSE unanimously favour SNAIVE over TSLM by a wide margin.
+
+
+#5.2. Is the Difference Significant?
+
+#5.2a.
+
+errs <- gas_cv_fc |>
+  as_tibble() |>
+  left_join(as_tibble(can_gas) |> select(Month, actual = Volume),
+            by = "Month") |>
+  mutate(e = actual - .mean) |>
+  select(Month, .model, e) |>
+  pivot_wider(names_from = .model, values_from = e) |>
+  na.omit()
+
+forecast::dm.test(errs$snaive, errs$tslm, h = 1, power = 1)
+
+#Report the DM statistic and p-value. In a sentence or two, state your conclusion in words
+
+
+#5.3. A Rolling Window
+
+#5.3a.
+
+
+
+
+
+
+
+
+
 
 
 
